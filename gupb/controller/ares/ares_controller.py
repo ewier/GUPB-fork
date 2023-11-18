@@ -33,6 +33,20 @@ def tilePassable(tile):
         return tile.passable
     return False
 
+def tileIsMist(tile):
+    for effect in tile.effects:
+        if effect.type == 'mist':
+            return True
+    return False
+
+def tilePassable(tile):
+    if type(tile) == tiles.TileDescription:
+        if tile.type in ['land', 'menhir']:
+            return True
+    elif type(tile) == tiles.Tile:
+        return tile.passable
+    return False
+
 class Map():
     '''Gathers and keeps information about the state of the arena'''
 
@@ -47,6 +61,7 @@ class Map():
         self.position = None  # current position
         self.opponents = []  # list of tuples (Coord, Character) for every currently visible opponent
         self.closestMist = None  # coord
+        self.menhir=None # coords of menhir
         self.menhir=None # coords of menhir
 
     def initMap(self):
@@ -65,6 +80,11 @@ class Map():
         self.position = knowledge.position
         self.description = knowledge.visible_tiles[self.position].character
         self.opponentsAlive = knowledge.no_of_champions_alive - 1  # not including us
+        for coord, tile in knowledge.visible_tiles.items():
+            coord=coordinates.Coords(coord[0], coord[1])
+            self.map[coord.x][coord.y]=tile
+            if self.menhir is None and tile.type=="menhir":
+                self.menhir=coord
         for coord, tile in knowledge.visible_tiles.items():
             coord=coordinates.Coords(coord[0], coord[1])
             self.map[coord.x][coord.y]=tile
@@ -93,6 +113,7 @@ class Map():
         for new in all:
             if self.isInMap(new):
                 tile = self.map[new.x][new.y]
+                if (tilePassable(tile) and not tileIsMist(tile)) or mode != '':
                 if (tilePassable(tile) and not tileIsMist(tile)) or mode != '':
                     neighbours.append(new)
         return neighbours
@@ -169,6 +190,7 @@ class Map():
             if target == 'passable':
                 tile = self.map[v.x][v.y]
                 return tile.passable and not tileIsMist(tile)
+                return tile.passable and not tileIsMist(tile)
         if type(target) is coordinates.Coords:
             if v.x == target.x and v.y == target.y:
                 return True
@@ -178,16 +200,20 @@ class Map():
                 return True
         if type(target) is weapons.WeaponDescription:
             if tile.description().loot is not None and tile.description().loot.name == target.name: # maybe add description?
+            if tile.description().loot is not None and tile.description().loot.name == target.name: # maybe add description?
                 return True
         if type(target) is consumables.ConsumableDescription:
+            if tile.consumable is not None and tile.consumable.name == target.name:
             if tile.consumable is not None and tile.consumable.name == target.name:
                 return True
         if type(target) is effects.EffectDescription:
             for effect in tile.effects:
                 if effect.type == target.type:
+                if effect.type == target.type:
                     return True
         return False
 
+    def shortestPath(self, root, target, radius = None, mode=''):
     def shortestPath(self, root, target, radius = None, mode=''):
         '''
         find shortest path from A to B using the knowledge base
@@ -198,6 +224,9 @@ class Map():
         Visited = [[(0 if self.map[i][j] is not None else None) for j in range(self.MAPSIZE[1])] for i in range(self.MAPSIZE[0])] 
         Visited[root.x][root.y] = root
         Q = [root]
+        r = 0
+        while len(Q) > 0 and (radius is None or r <= radius):
+            r += 1
         r = 0
         while len(Q) > 0 and (radius is None or r <= radius):
             r += 1
@@ -219,6 +248,7 @@ class Map():
                     Q.append(p)
         return [], self.position
 
+    def findTarget(self, target, radius=None):
     def findTarget(self, target, radius=None):
         '''
         finds nearest coordinate, tile type, collectible type, 
@@ -270,6 +300,41 @@ class KnowledgeBase():
             inFrontCoords=self.mapBase.description.facing.value+self.mapBase.position
             nextStep = self.checkPossibleAction(self.mapBase.map[inFrontCoords.x][inFrontCoords.y])
         return nextStep
+
+    def stepPossible(self, step):
+        if step == characters.Action.STEP_FORWARD:
+            frontCoords=self.mapBase.description.facing.value+self.mapBase.position
+            frontTile=self.mapBase.map[frontCoords.x][frontCoords.y]
+            if not tilePassable(frontTile) or tileIsMist(frontTile):
+                return False
+        return True
+
+    def followTarget(self):
+        nextStep = None
+        if len(self.actionsToMake) > 0:
+            nextStep = self.actionsToMake[0]
+            self.actionsToMake.pop(0)
+            if not self.stepPossible(nextStep):
+                self.actionsToMake=None
+                self.actionsTarget=None
+                nextStep = None
+        if nextStep is None:
+            self.actionsToMake=None
+            self.actionsTarget=None
+            inFrontCoords=self.mapBase.description.facing.value+self.mapBase.position
+            nextStep = self.checkPossibleAction(self.mapBase.map[inFrontCoords.x][inFrontCoords.y])
+        return nextStep
+    
+    # def isMistNear(self):
+    #     target = effects.EffectDescription('mist')
+    #     mistPath, mistTile = self.mapBase.findTarget(
+    #         target, 
+    #         radius=self.tileNeighbourhood
+    #     )
+    #     if len(mistPath) > 0:
+    #         pass
+    #         # return self.followTarget() away from mist
+    #     return None
 
     def choice(self):
         '''
