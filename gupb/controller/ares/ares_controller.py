@@ -21,21 +21,6 @@ POSSIBLE_ACTIONS = [
     characters.Action.STEP_RIGHT
 ]
 
-
-def tileIsMist(tile):
-    for effect in tile.effects:
-        if effect.type == 'mist':
-            return True
-    return False
-
-def tilePassable(tile):
-    if type(tile) == tiles.TileDescription:
-        if tile.type in ['land', 'menhir']:
-            return True
-    elif type(tile) == tiles.Tile:
-        return tile.passable
-    return False
-
 def tileIsMist(tile):
     for effect in tile.effects:
         if effect.type == 'mist':
@@ -62,9 +47,12 @@ class Map():
         self.opponentsAlive = 0  # how many opponents are alive
         self.description = None  # description of our champion
         self.position = None  # current position
-        self.opponents = []  # list of tuples (Coord, Character) for every currently visible opponent
+        self.visibleOpponents = {}  # dictionary - (Coord, CharacterDescription) for every currently visible opponent
         self.closestMist = None  # coord
         self.menhir=None # coords of menhir
+        self.previousHealth=None
+        self.visiblePotions= []
+        self.visibleWeapons= {}
 
     def initMap(self):
         self.map = [[None for i in range(self.MAPSIZE[1])] for j in range(self.MAPSIZE[0])]
@@ -76,10 +64,14 @@ class Map():
         Update map with the knowledge gathered this round:
             adds current position to history, 
             updates number of steps,
-            updates number of opponents,
+            updates number of visibleOpponents,
             adds new map elements
         '''
+        self.visibleOpponents={} # only if we see them right know 
+        self.visiblePotions=[]
         self.position = knowledge.position
+        if self.description:
+            self.previousHealth=self.description.health
         self.description = knowledge.visible_tiles[self.position].character
         self.opponentsAlive = knowledge.no_of_champions_alive - 1  # not including us
         for coord, tile in knowledge.visible_tiles.items():
@@ -87,7 +79,13 @@ class Map():
             self.map[coord.x][coord.y]=tile
             if self.menhir is None and tile.type=="menhir":
                 self.menhir=coord
-
+            if tile.character and tile.character.controller_name!='AresControllerNike':
+                self.visibleOpponents[coord]=tile.character
+            if tile.consumable:
+                self.visiblePotions.append(coord)
+            if tile.loot:
+                self.visibleWeapons[coord]=tile.loot.name
+    
     def taxiDistance(self, root, target):
         '''Return taxi distance between two points.'''
         return abs(root.x - target.x) + abs(root.y - target.y)
@@ -267,6 +265,7 @@ class KnowledgeBase():
         self.actionsToMake=[]
         self.actionsTarget=None
         self.tileNeighbourhood = 16
+        self.facingDirection=None
 
     def stepPossible(self, step):
         if step == characters.Action.STEP_FORWARD:
@@ -340,7 +339,6 @@ class KnowledgeBase():
         inRightTile=self.mapBase.map[inRightCoords.x][inRightCoords.y]
         inLeftTile=self.mapBase.map[inLeftCoords.x][inLeftCoords.y]
         currentWeaponName=self.mapBase.description.weapon.name
-        bowReady=False
         try:            
             potionPath, potionTile = self.mapBase.findTarget(
                 consumables.ConsumableDescription('potion'), 
@@ -348,7 +346,6 @@ class KnowledgeBase():
             )
             
             if inFrontTile.character: # depending on a weapon!!!
-                # action=characters.Action.ATTACK
                 if currentWeaponName!="amulet":
                     action=characters.Action.ATTACK
                 else:
@@ -360,14 +357,20 @@ class KnowledgeBase():
                         action=characters.Action.STEP_BACKWARD
                     else:
                         action=characters.Action.ATTACK
-            elif currentWeaponName=="bow" and bowReady!=False:
+            elif currentWeaponName=="bow_unloaded":
                 action=characters.Action.ATTACK
             elif currentWeaponName=="amulet" and self.amuletCharactersToAttack():
                 action=characters.Action.ATTACK
-            # elif currentWeaponName=="axe" and self.axeCharactersToAttack():
-            #     action=characters.Action.ATTACK
-            # elif currentWeaponName=="bow" and bowReady and self.bowCharactersToAttack():
-            #     action=characters.Action.ATTACK
+            elif currentWeaponName=="axe" and self.axeCharactersToAttack():
+                action=characters.Action.ATTACK
+            elif currentWeaponName=="bow_loaded" and self.bowCharactersToAttack():
+                action=characters.Action.ATTACK
+            elif len(self.mapBase.visiblePotions)>0:
+                self.actionsToMake, self.actionsTarget = self.pathNearestPotioxn()
+                action = self.followTarget()
+            elif currentWeaponName=="knife" and len(self.mapBase.visibleWeapons)>0:
+                self.actionsToMake, self.actionsTarget = self.lookingForWeapon()
+                action = self.followTarget()
             elif self.round_counter<3:
                 action=characters.Action.TURN_RIGHT
                 self.round_counter+=1
@@ -389,6 +392,27 @@ class KnowledgeBase():
             action = self.checkPossibleAction(inFrontTile, inRightTile, inLeftTile, inBackTile)
         return action
     
+    def pathNearestPotion(self):
+        nearestPotionActions=None
+        nearestPotionTarget=None
+        for potion in self.mapBase.visiblePotions:
+            actionsToMake, actionsTarget = self.mapBase.findTarget(potion)
+            if nearestPotionActions is None or len(actionsToMake)<len(nearestPotionActions):
+                nearestPotionActions=actionsToMake
+                nearestPotionTarget=actionsTarget
+        return nearestPotionActions, nearestPotionTarget
+    
+    def lookingForWeapon(self):
+        nearestWeaponActions=None
+        nearestWeaponTarget=None
+        for key, value in self.mapBase.visibleWeapons.items():
+            actionsToMake, actionsTarget = self.mapBase.findTarget(key)
+            if nearestWeaponActions is None or len(actionsToMake)<len(nearestWeaponActions):
+                nearestWeaponActions=actionsToMake
+                nearestWeaponTarget=actionsTarget
+        return nearestWeaponActions, nearestWeaponTarget
+
+
     def checkPossibleAction(self, inFrontTile: tiles.TileDescription, inRightTile:tiles.TileDescription, \
                             inLeftTile:tiles.TileDescription, inBackTile:tiles.TileDescription):
         '''checks if tile in front is passable and if not turns randomly'''
@@ -414,18 +438,22 @@ class KnowledgeBase():
         currentPosition, facingCoords=self.mapBase.position, self.mapBase.description.facing.value
         inFrontCoords=facingCoords+currentPosition
         if facingCoords.x==0 and facingCoords.y==1:
+            self.facingDirection="up"
             inBackCoords=currentPosition+coordinates.Coords(0, -1)
             inRightCoords=currentPosition+coordinates.Coords(1, 0)
             inLeftCoords=currentPosition+coordinates.Coords(-1, 0)
         elif facingCoords.x==0 and facingCoords.y==-1:
+            self.facingDirection="down"
             inBackCoords=currentPosition+coordinates.Coords(0, 1)
             inRightCoords=currentPosition+coordinates.Coords(-1, 0)
             inLeftCoords=currentPosition+coordinates.Coords(1, 0)
         elif facingCoords.x==1 and facingCoords.y==0:
+            self.facingDirection="right"
             inBackCoords=currentPosition+coordinates.Coords(-1, 0)
             inRightCoords=currentPosition+coordinates.Coords(0, -1)
             inLeftCoords=currentPosition+coordinates.Coords(0, 1)
         else:
+            self.facingDirection="left"
             inBackCoords=currentPosition+coordinates.Coords(1, 0)
             inRightCoords=currentPosition+coordinates.Coords(0, 1)
             inLeftCoords=currentPosition+coordinates.Coords(0, -1)
@@ -441,15 +469,47 @@ class KnowledgeBase():
                 return True
         return False
     
-    # def axeCharactersToAttack(self, ):
-    #     '''checks if there are characters to be attacked by axe in our range'''
-    #     coordsInRange=[(1, 1), (-1, 1), (1, -1), (-1, -1), (2, 2),(-2, 2), (2, -2), (-2, -2)]
-    #     for element in coordsInRange:
-    #         coordInRange=coordinates.Coords(element)+self.mapBase.position
-    #         if self.mapBase.map[coordInRange.x][coordInRange.y].character:
-    #             return True
-    #     return False
+    def axeCharactersToAttack(self):
+        '''checks if there are characters to be attacked by axe in our range'''
+        if self.facingDirection=="up":
+            coordsInRange=[(0, 1), (1, 1), (-1, 1)]
+        elif self.facingDirection=="down":
+            coordsInRange=[(0, -1), (1, -1), (-1, -1)]
+        elif self.facingDirection=="right":
+            coordsInRange=[(1, 0), (1, -1), (1, -1)]
+        else:
+            coordsInRange=[(-1, 0), (-1, -1), (-1, 1)]
+        for element in coordsInRange:
+            coordInRange=coordinates.Coords(element)+self.mapBase.position
+            if self.mapBase.map[coordInRange.x][coordInRange.y].character:
+                return True
+        return False
+
+    def bowCharactersToAttack(self):
+        '''checks if there are characters to be attacked by axe in our range'''
+        for key, value in self.mapBase.visibleOpponents.items():
+            if self.facingDirection in ["left", "right"]:
+                if key.x==self.mapBase.position.x:
+                    return True
+            else:
+                if key.y==self.mapBase.position.y:
+                    return True
+        return False
     
+    def botInDanger(self):
+        currentPostion=self.mapBase.position
+        if self.mapBase.previousHealth is None:
+            return None
+        healthLoss=self.mapBase.previousHealth-self.mapBase.description.health
+        if healthLoss==1:
+            if tileIsMist(self.mapBase.map[currentPostion.x][currentPostion.y]):
+                return "mist"
+        if healthLoss==2:
+            return "attacked"
+        if healthLoss>2:
+            return "multipleDanger"
+        return None
+
     def update(self, knowledge: characters.ChampionKnowledge):
         self.mapBase.update(knowledge)
     
