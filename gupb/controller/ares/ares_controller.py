@@ -287,30 +287,6 @@ class KnowledgeBase():
             inFrontCoords=self.mapBase.description.facing.value+self.mapBase.position
             nextStep = self.checkPossibleAction(self.mapBase.map[inFrontCoords.x][inFrontCoords.y])
         return nextStep
-
-    def stepPossible(self, step):
-        if step == characters.Action.STEP_FORWARD:
-            frontCoords=self.mapBase.description.facing.value+self.mapBase.position
-            frontTile=self.mapBase.map[frontCoords.x][frontCoords.y]
-            if not tilePassable(frontTile) or tileIsMist(frontTile):
-                return False
-        return True
-
-    def followTarget(self):
-        nextStep = None
-        if len(self.actionsToMake) > 0:
-            nextStep = self.actionsToMake[0]
-            self.actionsToMake.pop(0)
-            if not self.stepPossible(nextStep):
-                self.actionsToMake=None
-                self.actionsTarget=None
-                nextStep = None
-        if nextStep is None:
-            self.actionsToMake=None
-            self.actionsTarget=None
-            inFrontCoords=self.mapBase.description.facing.value+self.mapBase.position
-            nextStep = self.checkPossibleAction(self.mapBase.map[inFrontCoords.x][inFrontCoords.y])
-        return nextStep
     
     # def isMistNear(self):
     #     target = effects.EffectDescription('mist')
@@ -364,10 +340,16 @@ class KnowledgeBase():
                 action=characters.Action.ATTACK
             elif len(self.mapBase.visiblePotions)>0:
                 self.actionsToMake, self.actionsTarget = self.pathNearestPotioxn()
-                action = self.followTarget()
+                if len(self.actionsToMake)>0:
+                    action = self.followTarget()
+                else:
+                    action = self.checkPossibleAction(inFrontTile, inRightTile, inLeftTile, inBackTile)
             elif currentWeaponName=="knife" and len(self.mapBase.visibleWeapons)>0:
                 self.actionsToMake, self.actionsTarget = self.lookingForWeapon()
-                action = self.followTarget()
+                if len(self.actionsToMake)>0:
+                    action = self.followTarget()
+                else:
+                    action = self.checkPossibleAction(inFrontTile, inRightTile, inLeftTile, inBackTile)
             elif self.round_counter<3:
                 action=characters.Action.TURN_RIGHT
                 self.round_counter+=1
