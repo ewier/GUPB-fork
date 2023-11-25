@@ -10,6 +10,10 @@ from gupb.model import weapons
 from gupb.model import consumables
 from gupb.model import effects
 
+def logger(msg):
+    with open("gupb\\controller\\ares\\logs.txt", "a") as myfile:
+        myfile.write(f"{msg}\n") 
+
 
 POSSIBLE_ACTIONS = [
     characters.Action.TURN_LEFT,
@@ -158,6 +162,7 @@ class Map():
                 str_action = "NONE"
             else:
                 str_action = "ATTACK"
+        return str_action
         
     def getActions(self, position, path):
         '''Returns a list of actions needed to be performed to walk the given path.'''
@@ -184,7 +189,8 @@ class Map():
             if target == 'passable':
                 tile = self.map[v.x][v.y]
                 return tile.passable and not tileIsMist(tile)
-                return tile.passable and not tileIsMist(tile)
+            elif target == 'non-mist':
+                return not tileIsMist(self.map[v.x][v.y])
         if type(target) is coordinates.Coords:
             if v.x == target.x and v.y == target.y:
                 return True
@@ -193,7 +199,7 @@ class Map():
             if tile.type == target.type:
                 return True
         if type(target) is weapons.WeaponDescription:
-            if tile.description().loot is not None and tile.description().loot.name == target.name: # maybe add description?
+            if tile.loot is not None and tile.loot.name == target.name:
                 return True
         if type(target) is consumables.ConsumableDescription:
             if tile.consumable is not None and tile.consumable.name == target.name:
@@ -287,17 +293,39 @@ class KnowledgeBase():
             inFrontCoords=self.mapBase.description.facing.value+self.mapBase.position
             nextStep = self.checkPossibleAction(self.mapBase.map[inFrontCoords.x][inFrontCoords.y])
         return nextStep
-    
-    # def isMistNear(self):
-    #     target = effects.EffectDescription('mist')
-    #     mistPath, mistTile = self.mapBase.findTarget(
-    #         target, 
-    #         radius=self.tileNeighbourhood
-    #     )
-    #     if len(mistPath) > 0:
-    #         pass
-    #         # return self.followTarget() away from mist
-    #     return None
+
+    def stepPossible(self, step):
+        if step == characters.Action.STEP_FORWARD:
+            frontCoords=self.mapBase.description.facing.value+self.mapBase.position
+            frontTile=self.mapBase.map[frontCoords.x][frontCoords.y]
+            if not tilePassable(frontTile) or tileIsMist(frontTile):
+                return False
+        return True
+
+    def followTarget(self):
+        nextStep = None
+        if len(self.actionsToMake) > 0:
+            nextStep = self.actionsToMake[0]
+            self.actionsToMake.pop(0)
+            if not self.stepPossible(nextStep):
+                self.actionsToMake=None
+                self.actionsTarget=None
+                nextStep = None
+        if nextStep is None:
+            self.actionsToMake=None
+            self.actionsTarget=None
+            inFrontCoords, inBackCoords, inRightCoords, inLeftCoords=self.getCoordsTiles()
+            inFrontTile=self.mapBase.map[inFrontCoords.x][inFrontCoords.y]
+            inBackTile=self.mapBase.map[inBackCoords.x][inBackCoords.y]
+            inRightTile=self.mapBase.map[inRightCoords.x][inRightCoords.y]
+            inLeftTile=self.mapBase.map[inLeftCoords.x][inLeftCoords.y]
+            nextStep = self.checkPossibleAction(inFrontTile, inRightTile, inLeftTile, inBackTile)
+        return nextStep
+
+    def avoidMist(self):
+        target = 'non-mist'
+        mistPath, mistTile = self.mapBase.findTarget(target)
+        return mistPath, mistTile
 
     def choice(self):
         '''
@@ -312,13 +340,21 @@ class KnowledgeBase():
         inRightTile=self.mapBase.map[inRightCoords.x][inRightCoords.y]
         inLeftTile=self.mapBase.map[inLeftCoords.x][inLeftCoords.y]
         currentWeaponName=self.mapBase.description.weapon.name
-        try:            
+        try:
+            mistPath, mistTile = self.avoidMist()
+
             potionPath, potionTile = self.mapBase.findTarget(
                 consumables.ConsumableDescription('potion'), 
                 radius=self.tileNeighbourhood
             )
-            
-            if inFrontTile.character: # depending on a weapon!!!
+
+            bowPath = []
+            if currentWeaponName != 'bow':
+                bowPath, bowTile = self.mapBase.findTarget(
+                    weapons.WeaponDescription('bow')
+                )
+
+            if inFrontTile.character: # depending on a weapon
                 if currentWeaponName!="amulet":
                     action=characters.Action.ATTACK
                 else:
@@ -330,6 +366,9 @@ class KnowledgeBase():
                         action=characters.Action.STEP_BACKWARD
                     else:
                         action=characters.Action.ATTACK
+            elif len(mistPath) > 0:
+                self.actionsToMake, self.actionsTarget = mistPath, mistTile
+                action = self.followTarget()
             elif currentWeaponName=="bow_unloaded":
                 action=characters.Action.ATTACK
             elif currentWeaponName=="amulet" and self.amuletCharactersToAttack():
@@ -339,7 +378,7 @@ class KnowledgeBase():
             elif currentWeaponName=="bow_loaded" and self.bowCharactersToAttack():
                 action=characters.Action.ATTACK
             elif len(self.mapBase.visiblePotions)>0:
-                self.actionsToMake, self.actionsTarget = self.pathNearestPotioxn()
+                self.actionsToMake, self.actionsTarget = self.pathNearestPotion()
                 if len(self.actionsToMake)>0:
                     action = self.followTarget()
                 else:
@@ -365,6 +404,9 @@ class KnowledgeBase():
                 else:
                     self.actionsToMake, self.actionsTarget = [], None
                     action = self.checkPossibleAction(inFrontTile, inRightTile, inLeftTile, inBackTile)
+            elif len(bowPath) > 0:
+                self.actionsToMake, self.actionsTarget = bowPath, bowTile
+                action = self.followTarget()
             else:
                 action = self.checkPossibleAction(inFrontTile, inRightTile, inLeftTile, inBackTile)
         except:
@@ -399,16 +441,16 @@ class KnowledgeBase():
                 characters.Action.TURN_LEFT, 
                 characters.Action.TURN_RIGHT
             ]
-        if tilePassable(inFrontTile):
+        if tilePassable(inFrontTile) and not tileIsMist(inFrontTile):
             actionsList.append(characters.Action.STEP_FORWARD)
             actionsList.append(characters.Action.STEP_FORWARD)
             actionsList.append(characters.Action.STEP_FORWARD)
             actionsList.append(characters.Action.STEP_FORWARD)
-        if tilePassable(inRightTile):
+        if tilePassable(inRightTile) and not tileIsMist(inRightTile):
             actionsList.append(characters.Action.STEP_RIGHT)
-        if tilePassable(inLeftTile):
+        if tilePassable(inLeftTile) and not tileIsMist(inLeftTile):
             actionsList.append(characters.Action.STEP_LEFT)
-        if tilePassable(inBackTile):
+        if tilePassable(inBackTile) and not tileIsMist(inBackTile):
             actionsList.append(characters.Action.STEP_BACKWARD)
         return random.choice(actionsList)
         
@@ -443,8 +485,8 @@ class KnowledgeBase():
         '''checks if there are characters to be attacked by amulet in our range'''
         coordsInRange=[(1, 1), (-1, 1), (1, -1), (-1, -1), (2, 2),(-2, 2), (2, -2), (-2, -2)]
         for element in coordsInRange:
-            coordInRange=coordinates.Coords(element)+self.mapBase.position
-            if self.mapBase.map[coordInRange.x][coordInRange.y].character:
+            coordInRange=coordinates.Coords(element[0], element[1])+self.mapBase.position
+            if self.mapBase.isInMap(coordInRange) and self.mapBase.map[coordInRange.x][coordInRange.y].character:
                 return True
         return False
     
@@ -459,8 +501,8 @@ class KnowledgeBase():
         else:
             coordsInRange=[(-1, 0), (-1, -1), (-1, 1)]
         for element in coordsInRange:
-            coordInRange=coordinates.Coords(element)+self.mapBase.position
-            if self.mapBase.map[coordInRange.x][coordInRange.y].character:
+            coordInRange=coordinates.Coords(element[0], element[1])+self.mapBase.position
+            if self.mapBase.isInMap(coordInRange) and self.mapBase.map[coordInRange.x][coordInRange.y].character:
                 return True
         return False
 
