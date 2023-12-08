@@ -290,38 +290,15 @@ class KnowledgeBase():
         if nextStep is None:
             self.actionsToMake=[]
             self.actionsTarget=None
-            inFrontCoords=self.mapBase.description.facing.value+self.mapBase.position
-            nextStep = self.checkPossibleAction(self.mapBase.map[inFrontCoords.x][inFrontCoords.y])
-        return nextStep
-
-    def stepPossible(self, step):
-        if step == characters.Action.STEP_FORWARD:
-            frontCoords=self.mapBase.description.facing.value+self.mapBase.position
-            frontTile=self.mapBase.map[frontCoords.x][frontCoords.y]
-            if not tilePassable(frontTile) or tileIsMist(frontTile):
-                return False
-        return True
-
-    def followTarget(self):
-        nextStep = None
-        if len(self.actionsToMake) > 0:
-            nextStep = self.actionsToMake[0]
-            self.actionsToMake.pop(0)
-            if not self.stepPossible(nextStep):
-                self.actionsToMake=None
-                self.actionsTarget=None
-                nextStep = None
-        if nextStep is None:
-            self.actionsToMake=None
-            self.actionsTarget=None
             inFrontCoords, inBackCoords, inRightCoords, inLeftCoords=self.getCoordsTiles()
             inFrontTile=self.mapBase.map[inFrontCoords.x][inFrontCoords.y]
             inBackTile=self.mapBase.map[inBackCoords.x][inBackCoords.y]
             inRightTile=self.mapBase.map[inRightCoords.x][inRightCoords.y]
             inLeftTile=self.mapBase.map[inLeftCoords.x][inLeftCoords.y]
             nextStep = self.checkPossibleAction(inFrontTile, inRightTile, inLeftTile, inBackTile)
-        return nextStep
 
+        return nextStep
+    
     def avoidMist(self):
         target = 'non-mist'
         mistPath, mistTile = self.mapBase.findTarget(target)
